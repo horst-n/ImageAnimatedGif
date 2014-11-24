@@ -1,5 +1,8 @@
-#Image Animated Gif
+Image Animated Gif
+======================
 
-###ProcessWire Module that helps with resizing and cropping of animated GIFs when using GD-Library
+### Module for ProcessWire 2.5 stable or newer
 
-####requires ProcessWire 2.5 stable or newer
+#### Version 0.0.1
+
+##### helps with resizing and cropping of animated GIFs when using GD-Library
