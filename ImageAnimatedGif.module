@@ -1,0 +1,170 @@
+<?php
+/**
+*  This module helps with resizing and cropping of animated GIFs when using GD-Lib.
+*  The GD-Library do not support this.
+*
+*  This module is completely based upon the fantastic work of
+*
+*    * László Zsidi *
+*
+*      http://www.gifs.hu/
+*      http://www.phpclasses.org/gifsplit
+*      http://www.phpclasses.org/gifmerge
+*
+*
+*  and Tommi Forsström
+*
+*      http://forssto.com/gifexample/
+*      http://stackoverflow.com/users/85702/tommi-forsstr%C3%B6m
+*
+*
+*  ported to PW module by Horst Nogajski
+*
+*      https://processwire.com/talk/user/1041-horst/
+*
+*  ToDo:
+*      [x] work together with Pia
+*      [ ] support for individual Crops of CropImagefields
+*/
+
+class ImageAnimatedGif extends WireData implements Module {
+
+
+    public function init() {
+        $this->pages->addHookBefore('ImageSizer::resize', $this, 'processEventBefore', array('priority'=>1));
+    }
+
+
+    public function processEventBefore(&$event) {
+        if (1 != $event->object->imageType) {
+            return;  // early return if it isn't a GIF
+        }
+        if (!$this->isAnimatedGif($event->object->filename)) {
+            return;  // early return if it isn't a animated GIF
+        }
+        // oh dear, I feel a bit 'retro' now: it's an animated GIF
+        require_once( __DIR__ . '/libs/gif_decoder.class.php');
+        require_once( __DIR__ . '/libs/gif_encoder.class.php');
+        $wS = $event->object->image['width'];
+        $hS = $event->object->image['height'];
+        $wT = $event->arguments[0];
+        $hT = $event->arguments[1];
+        if (0 == $wT && 0 == $hT) return;
+        if (0 == $wT) $wT = ceil(($hT / $hS) * $wS);
+        if (0 == $hT) $hT = ceil(($wT / $wS) * $hS);
+        $tmpFile = $event->object->filename . '.tmp';
+        $resizemethod = (false == $event->object->cropping) ? 2 : 4;
+        if (@copy($event->object->filename, $tmpFile) && $this->scaleAnimatedGif($event->object->filename, $wS, $hS, $wT, $hT, $tmpFile, $resizemethod)) {
+            // we have the resized animated Gif in $tmpFile now
+            if (@copy($tmpFile, $event->object->filename)) {
+                @unlink($tmpFile);
+                $event->replace = true;
+                $event->return = true;
+                return true;
+            }
+        }
+    }
+
+
+    private function isAnimatedGif($filename) {
+        return (bool) preg_match('/\x00\x21\xF9\x04.{4}\x00(\x2C|\x21)/s', file_get_contents($filename));
+    }
+
+
+    /**
+    * $resizemethod:
+    *
+    * 2 = contain with aspect ratio
+    *
+    * 3 = contain without aspect ratio, (stretch source to dest)
+    *
+    * 4 = resize and crop from center with aspect ratio
+    */
+    private function scaleAnimatedGif($fileSrc, $width, $height, $w, $h, $saveTo, $resizemethod = 4) {
+
+        $delays = array(5);
+
+        $gif = new GIFDecoder(file_get_contents($fileSrc));
+        $delays = $gif->GIFGetDelays();
+        $oldimg_a = $gif->GIFGetFrames();
+
+        if (sizeof($oldimg_a) <= 0) return false;
+
+        for($i = 0; $i < sizeof($oldimg_a); $i++){
+            $oldimg_a[$i] = imagecreatefromstring($oldimg_a[$i]);
+        }
+
+        $newimg_a = array();
+
+        foreach($oldimg_a as $oldimg) {
+            $newimg = null;
+            if($resizemethod == 4){
+                $ratio = 1.0;
+                $ratio_w = $width / $w;
+                $ratio_h = $height / $h;
+                $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);
+                $neww = intval($width / $ratio);
+                $newh = intval($height / $ratio);
+                $tempimg = imagecreatetruecolor($neww, $newh);
+                imagecopyresampled($tempimg, $oldimg, 0, 0, 0, 0, $neww, $newh, $width, $height);
+                $clipw = 0; $cliph = 0;
+                if($neww > $w) $clipw = $neww - $w;
+                if($newh > $h) $cliph = $newh - $h;
+                $cliptop = floor($cliph / 2);
+                $clipleft = floor($clipw / 2);
+                $newimg = imagecreatetruecolor($w, $h);
+                imagecopy($newimg, $tempimg, 0, 0, $clipleft, $cliptop, $w, $h);
+            }else if($resizemethod == 3){
+                $newimg = imagecreatetruecolor($w, $h);
+                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
+            }else if($resizemethod == 2){
+                $ratio = 1.0;
+                $ratio_w = $width / $w;
+                $ratio_h = $height / $h;
+                $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
+                $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
+                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
+            }else{
+                $ratio = 1.0;
+                if($width > $w || $height > $h){
+                    $ratio = $width / $w;
+                    if(($height / $h) > $ratio) $ratio = $height / $h;
+                }
+                $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
+                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
+            }
+            array_push($newimg_a, $newimg);
+        }
+
+        if (sizeof($newimg_a) > 1) {
+
+            $newa = array();
+            foreach($newimg_a as $i) {
+                ob_start();
+                imagegif($i);
+                $gifdata = ob_get_clean();
+                array_push($newa, $gifdata);
+            }
+
+            $gifmerge = new GIFEncoder (
+                        $newa,
+                        $delays,
+                        999,
+                        2,
+                        0, 0, 0,
+                        "bin"
+            );
+            FWrite ( FOpen ( $saveTo, "wb" ), $gifmerge->GetAnimation ( ) );
+
+        } else {
+            return false;
+        }
+
+        foreach($newimg_a as $newimg){
+            imagedestroy($newimg);
+        }
+
+        return true;
+    }
+
+}
