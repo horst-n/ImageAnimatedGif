@@ -22,9 +22,9 @@
 *
 *      https://processwire.com/talk/user/1041-horst/
 *
-*  ToDo:
-*      [x] work together with Pia
-*      [ ] support for individual Crops of CropImagefields
+*
+*  https://processwire.com/talk/topic/8386-image-animated-gif/
+*  https://processwire.com/talk/topic/8355-animated-gif-images-not-working-after-resize/
 */
 
 class ImageAnimatedGif extends WireData implements Module {
@@ -54,6 +54,8 @@ class ImageAnimatedGif extends WireData implements Module {
         if (0 == $hT) $hT = ceil(($wT / $wS) * $hS);
         $tmpFile = $event->object->filename . '.tmp';
         $resizemethod = (false == $event->object->cropping) ? 2 : 4;
+        $this->cropExtra = $event->object->cropExtra;
+        $resizemethod = is_array($this->cropExtra) ? 6 : $resizemethod;
         if (@copy($event->object->filename, $tmpFile) && $this->scaleAnimatedGif($event->object->filename, $wS, $hS, $wT, $hT, $tmpFile, $resizemethod)) {
             // we have the resized animated Gif in $tmpFile now
             if (@copy($tmpFile, $event->object->filename)) {
@@ -98,40 +100,56 @@ class ImageAnimatedGif extends WireData implements Module {
 
         foreach($oldimg_a as $oldimg) {
             $newimg = null;
-            if($resizemethod == 4){
-                $ratio = 1.0;
-                $ratio_w = $width / $w;
-                $ratio_h = $height / $h;
-                $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);
-                $neww = intval($width / $ratio);
-                $newh = intval($height / $ratio);
-                $tempimg = imagecreatetruecolor($neww, $newh);
-                imagecopyresampled($tempimg, $oldimg, 0, 0, 0, 0, $neww, $newh, $width, $height);
-                $clipw = 0; $cliph = 0;
-                if($neww > $w) $clipw = $neww - $w;
-                if($newh > $h) $cliph = $newh - $h;
-                $cliptop = floor($cliph / 2);
-                $clipleft = floor($clipw / 2);
-                $newimg = imagecreatetruecolor($w, $h);
-                imagecopy($newimg, $tempimg, 0, 0, $clipleft, $cliptop, $w, $h);
-            }else if($resizemethod == 3){
-                $newimg = imagecreatetruecolor($w, $h);
-                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
-            }else if($resizemethod == 2){
-                $ratio = 1.0;
-                $ratio_w = $width / $w;
-                $ratio_h = $height / $h;
-                $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
-                $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
-                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
-            }else{
-                $ratio = 1.0;
-                if($width > $w || $height > $h){
-                    $ratio = $width / $w;
-                    if(($height / $h) > $ratio) $ratio = $height / $h;
-                }
-                $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
-                imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
+            switch($resizemethod) {
+                case 6:
+                    // get crop values and create a new intermediate image
+                    list($x1, $y1, $w1, $h1) = $this->cropExtra;
+                    $tempimg = imagecreatetruecolor($w1, $h1);
+                    imagecopy($tempimg, $oldimg, 0, 0, $x1, $y1, $w1, $h1);
+                    unset($x1, $y1, $w1, $h1);
+                    $width = imagesx($tempimg);
+                    $height = imagesy($tempimg);
+                    $oldimg = imagecreatetruecolor($width, $height);
+                    imagecopy($oldimg, $tempimg, 0, 0, 0, 0, $width, $height);
+                    imagedestroy($tempimg);
+                    // fallthrough for the final resize !! no break here !!
+                case 4:
+                    $ratio = 1.0;
+                    $ratio_w = $width / $w;
+                    $ratio_h = $height / $h;
+                    $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);
+                    $neww = intval($width / $ratio);
+                    $newh = intval($height / $ratio);
+                    $tempimg = imagecreatetruecolor($neww, $newh);
+                    imagecopyresampled($tempimg, $oldimg, 0, 0, 0, 0, $neww, $newh, $width, $height);
+                    $clipw = 0; $cliph = 0;
+                    if($neww > $w) $clipw = $neww - $w;
+                    if($newh > $h) $cliph = $newh - $h;
+                    $cliptop = floor($cliph / 2);
+                    $clipleft = floor($clipw / 2);
+                    $newimg = imagecreatetruecolor($w, $h);
+                    imagecopy($newimg, $tempimg, 0, 0, $clipleft, $cliptop, $w, $h);
+                    break;
+                case 3:
+                    $newimg = imagecreatetruecolor($w, $h);
+                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
+                    break;
+                case 2:
+                    $ratio = 1.0;
+                    $ratio_w = $width / $w;
+                    $ratio_h = $height / $h;
+                    $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
+                    $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
+                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
+                    break;
+                default:
+                    $ratio = 1.0;
+                    if($width > $w || $height > $h) {
+                        $ratio = $width / $w;
+                        if(($height / $h) > $ratio) $ratio = $height / $h;
+                    }
+                    $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
+                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
             }
             array_push($newimg_a, $newimg);
         }
