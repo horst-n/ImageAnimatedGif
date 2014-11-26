@@ -1,7 +1,15 @@
 <?php
 /**
-*  This module helps with resizing and cropping of animated GIFs when using GD-Lib.
-*  The GD-Library do not support this.
+*  ProcessWire 2.5.x
+*  Copyright (C) 2010 by Ryan Cramer
+*  Licensed under GNU/GPL v2, see LICENSE.TXT
+*
+*  http://www.processwire.com
+*  http://www.ryancramer.com
+*
+*
+*  This module supports resizing and cropping of animated GIFs when using GD-Library.
+*  (The GD-Library do not support this)
 *
 *  This module is completely based upon the fantastic work of
 *
@@ -21,10 +29,8 @@
 *  ported to PW module by Horst Nogajski
 *
 *      https://processwire.com/talk/user/1041-horst/
-*
-*
-*  https://processwire.com/talk/topic/8386-image-animated-gif/
-*  https://processwire.com/talk/topic/8355-animated-gif-images-not-working-after-resize/
+*      https://processwire.com/talk/topic/8386-image-animated-gif/
+*      https://processwire.com/talk/topic/8355-animated-gif-images-not-working-after-resize/
 */
 
 class ImageAnimatedGif extends WireData implements Module {
