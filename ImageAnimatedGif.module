@@ -13,14 +13,18 @@
 *
 *  This module is completely based upon the fantastic work of
 *
-*    * László Zsidi *
+*    * László Zsidi *  (initial classes)
 *
 *      http://www.gifs.hu/
 *      http://www.phpclasses.org/gifsplit
 *      http://www.phpclasses.org/gifmerge
 *
+*    * xurei *  (enhanced classes)
 *
-*  and Tommi Forsström
+*      https://github.com/xurei/GIFDecoder_optimized
+*
+*
+*  and Tommi Forsström (provides usage example)
 *
 *      http://forssto.com/gifexample/
 *      http://stackoverflow.com/users/85702/tommi-forsstr%C3%B6m
@@ -35,6 +39,7 @@
 
 class ImageAnimatedGif extends WireData implements Module {
 
+    private $meta = null;
 
     public function init() {
         $this->pages->addHookBefore('ImageSizer::resize', $this, 'processEventBefore', array('priority'=>1));
@@ -46,7 +51,7 @@ class ImageAnimatedGif extends WireData implements Module {
             return;  // early return if it isn't a GIF
         }
         if (!$this->isAnimatedGif($event->object->filename)) {
-            return;  // early return if it isn't a animated GIF
+            return;  // early return if it isn't an animated GIF
         }
         // oh dear, I feel a bit 'retro' now: it's an animated GIF
         require_once( __DIR__ . '/libs/gif_decoder.class.php');
@@ -79,116 +84,143 @@ class ImageAnimatedGif extends WireData implements Module {
     }
 
 
+    private function prepareGDimage(&$gdimage) {
+        return;
+        $transparentNew = imagecolorallocate($gdimage, $this->meta['tr'], $this->meta['tg'], $this->meta['tb']);
+        $transparentNewIndex = imagecolortransparent($gdimage, $transparentNew);
+        imagefill($gdimage, 0, 0, $transparentNewIndex);
+    }
+
+
     /**
     * $resizemethod:
     *
     * 2 = contain with aspect ratio
     *
-    * 3 = contain without aspect ratio, (stretch source to dest)
-    *
     * 4 = resize and crop from center with aspect ratio
     */
-    private function scaleAnimatedGif($fileSrc, $width, $height, $w, $h, $saveTo, $resizemethod = 4) {
+    private function scaleAnimatedGif($fileSrc, $fullWidth, $fullHeight, $finalWidth, $finalHeight, $saveTo, $resizemethod = 4) {
 
-        $delays = array(5);
+        $gif = new GIFdecoder(file_get_contents($fileSrc));
+        $this->meta = array(
+            'delays'    => $gif->GIFGetDelays(),
+            'loops'     => $gif->GIFGetLoop(),
+            'disposal'  => $gif->GIFGetDisposal(),
+            'tr'        => $gif->GIFGetTransparentR(),
+            'tg'        => $gif->GIFGetTransparentG(),
+            'tb'        => $gif->GIFGetTransparentB()
+        );
+        $originalFrames     = $gif->GIFGetFrames();
+        $originalFramesMeta = $gif->GIFGetFramesMeta();
 
-        $gif = new GIFDecoder(file_get_contents($fileSrc));
-        $delays = $gif->GIFGetDelays();
-        $oldimg_a = $gif->GIFGetFrames();
+        if (count($originalFrames) <= 0) return false;
 
-        if (sizeof($oldimg_a) <= 0) return false;
-
-        for($i = 0; $i < sizeof($oldimg_a); $i++){
-            $oldimg_a[$i] = imagecreatefromstring($oldimg_a[$i]);
+        for($i = 0; $i < count($originalFrames); $i++) {
+            $originalFrames[$i] = imagecreatefromstring($originalFrames[$i]);
         }
 
-        $newimg_a = array();
+        $newFrames = array();
+        $intermediateimg = null;
 
-        foreach($oldimg_a as $oldimg) {
-            $newimg = null;
-            switch($resizemethod) {
-                case 6:
-                    // get crop values and create a new intermediate image
-                    list($x1, $y1, $w1, $h1) = $this->cropExtra;
-                    $tempimg = imagecreatetruecolor($w1, $h1);
-                    imagecopy($tempimg, $oldimg, 0, 0, $x1, $y1, $w1, $h1);
-                    unset($x1, $y1, $w1, $h1);
-                    $width = imagesx($tempimg);
-                    $height = imagesy($tempimg);
-                    $oldimg = imagecreatetruecolor($width, $height);
-                    imagecopy($oldimg, $tempimg, 0, 0, 0, 0, $width, $height);
-                    imagedestroy($tempimg);
-                    // fallthrough for the final resize !! no break here !!
-                case 4:
-                    $ratio = 1.0;
-                    $ratio_w = $width / $w;
-                    $ratio_h = $height / $h;
-                    $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);
-                    $neww = intval($width / $ratio);
-                    $newh = intval($height / $ratio);
-                    $tempimg = imagecreatetruecolor($neww, $newh);
-                    imagecopyresampled($tempimg, $oldimg, 0, 0, 0, 0, $neww, $newh, $width, $height);
-                    $clipw = 0; $cliph = 0;
-                    if($neww > $w) $clipw = $neww - $w;
-                    if($newh > $h) $cliph = $newh - $h;
-                    $cliptop = floor($cliph / 2);
-                    $clipleft = floor($clipw / 2);
-                    $newimg = imagecreatetruecolor($w, $h);
-                    imagecopy($newimg, $tempimg, 0, 0, $clipleft, $cliptop, $w, $h);
-                    break;
-                case 3:
-                    $newimg = imagecreatetruecolor($w, $h);
-                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
-                    break;
-                case 2:
-                    $ratio = 1.0;
-                    $ratio_w = $width / $w;
-                    $ratio_h = $height / $h;
-                    $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
-                    $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
-                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
-                    break;
-                default:
-                    $ratio = 1.0;
-                    if($width > $w || $height > $h) {
-                        $ratio = $width / $w;
-                        if(($height / $h) > $ratio) $ratio = $height / $h;
-                    }
-                    $newimg = imagecreatetruecolor(intval($width / $ratio), intval($height / $ratio));
-                    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, intval($width / $ratio), intval($height / $ratio), $width, $height);
+        foreach($originalFrames as $k => $frame) {
+
+            #$newimg = null;
+                        //case 3:
+                        //    $newimg = imagecreatetruecolor($w, $h);
+                        //    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
+                        //    break;
+//            // cropExtra
+//            if (6 == $resizemethod) {
+//                // get crop values and create a new intermediate image
+//                list($x1, $y1, $w1, $h1) = $this->cropExtra;
+//                $tempimg = imagecreatetruecolor($w1, $h1);
+//                $this->prepareGDimage($tempimg);  // prepare transparency
+//                imagecopy($tempimg, $frame, 0, 0, $x1, $y1, $w1, $h1);
+//                unset($x1, $y1, $w1, $h1);
+//                $fullWidth = imagesx($tempimg);
+//                $fullHeight = imagesy($tempimg);
+//                $frame = imagecreatetruecolor($fullWidth, $fullHeight);
+//                $this->prepareGDimage($frame);  // prepare transparency
+//                imagecopy($frame, $tempimg, 0, 0, 0, 0, $fullWidth, $fullHeight);
+//                imagedestroy($tempimg);
+//            }
+
+            // contain || resize
+            if (2 == $resizemethod || 4 == $resizemethod) {
+                $ratio = 1.0;
+                $ratio_w = $fullWidth / $finalWidth;
+                $ratio_h = $fullHeight / $finalHeight;
+                $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);  // resize and / or crop
+                if (2 == $resizemethod) $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);  // contain
+
+                $finalWidth2 = intval($fullWidth / $ratio);
+                $finalHeight2 = intval($fullHeight / $ratio);
+
+                $newimg = imagecreatetruecolor($finalWidth2, $finalHeight2);
+                $this->prepareGDimage($newimg);  // prepare transparency
+                if (is_resource($intermediateimg)) {
+                    imagecopy($newimg, $intermediateimg, 0, 0, 0, 0, $finalWidth2, $finalHeight2);
+                }
+
+                $srcX = 0; // all frames (but not the first frame) can be a small partial area only
+                $srcY = 0;
+                $srcW = imageSX($frame);
+                $srcH = imageSY($frame);
+
+                $dstX = intval($originalFramesMeta[$k]['left'] / $ratio);
+                $dstY = intval($originalFramesMeta[$k]['top'] / $ratio);
+                $dstW = intval($originalFramesMeta[$k]['width'] / $ratio);
+                $dstH = intval($originalFramesMeta[$k]['height'] / $ratio);
+
+                if (4 == $resizemethod && 1 == $ratio) {
+                    imagecopy($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $srcW, $srcH);
+                }
+                else {
+                    imagecopyresampled($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $dstW, $dstH, $srcW, $srcH);
+                }
             }
-            array_push($newimg_a, $newimg);
+
+            if (is_resource($newimg)) {
+                array_push($newFrames, $newimg);
+                if (!is_resource($intermediateimg)) {
+                    $intermediateimg = imagecreatetruecolor($finalWidth, $finalHeight);
+                    $this->prepareGDimage($intermediateimg);  // prepare transparency
+                }
+                imagecopy($intermediateimg, $newimg, 0, 0, 0, 0, $finalWidth, $finalHeight);
+            }
+
         }
 
-        if (sizeof($newimg_a) > 1) {
-
-            $newa = array();
-            foreach($newimg_a as $i) {
+        if (count($newFrames) > 0) {
+            $frames = array();
+            foreach($newFrames as $i) {
                 ob_start();
                 imagegif($i);
                 $gifdata = ob_get_clean();
-                array_push($newa, $gifdata);
+                array_push($frames, $gifdata);
+                @imagedestroy($i);
             }
 
-            $gifmerge = new GIFEncoder (
-                        $newa,
-                        $delays,
-                        999,
-                        2,
-                        0, 0, 0,
-                        "bin"
+            $gifmerge = new GIFEncoder(
+                $frames,
+                $this->meta['delays'],
+                $this->meta['loops'],
+                $this->meta['disposal'],
+                $this->meta['tr'], $this->meta['tg'], $this->meta['tb'],
+                'bin'
             );
-            FWrite ( FOpen ( $saveTo, "wb" ), $gifmerge->GetAnimation ( ) );
 
-        } else {
-            return false;
+            $result = false === fwrite(fopen($saveTo, 'wb'), $gifmerge->GetAnimation()) ? false : true;
+        }
+        else {
+            $result = false;
         }
 
-        foreach($newimg_a as $newimg){
-            imagedestroy($newimg);
-        }
+        @imagedestroy($frame);
+        @imagedestroy($newimg);
+        @imagedestroy($intermediateimg);
 
-        return true;
+        return $result;
     }
 
 }
