@@ -8,8 +8,8 @@
 *  http://www.ryancramer.com
 *
 *
-*  This module supports resizing and cropping of animated GIFs when using GD-Library.
-*  (The GD-Library do not support this)
+*  This module supports resizing and cropping of animated GIFs when using GD-Library
+*  (The GD-Library does not support this)
 *
 *  This module is completely based upon the fantastic work of
 *
@@ -24,22 +24,30 @@
 *      https://github.com/xurei/GIFDecoder_optimized
 *
 *
-*  and Tommi Forsström (provides usage example)
+*      and Tommi Forsström (provides usage example)
 *
 *      http://forssto.com/gifexample/
-*      http://stackoverflow.com/users/85702/tommi-forsstr%C3%B6m
 *
 *
-*  ported to PW module by Horst Nogajski
+*  ported to ProcessWire module by Horst Nogajski
 *
 *      https://processwire.com/talk/user/1041-horst/
 *      https://processwire.com/talk/topic/8386-image-animated-gif/
 *      https://processwire.com/talk/topic/8355-animated-gif-images-not-working-after-resize/
+*
 */
 
 class ImageAnimatedGif extends WireData implements Module {
 
+    private $upscaling = null;
+    private $cropping = null;
+    private $cropExtra = null;
+    private $image = array(
+        'width' => 0,
+        'height' => 0
+        );
     private $meta = null;
+
 
     public function init() {
         $this->pages->addHookBefore('ImageSizer::resize', $this, 'processEventBefore', array('priority'=>1));
@@ -47,28 +55,29 @@ class ImageAnimatedGif extends WireData implements Module {
 
 
     public function processEventBefore(&$event) {
-        if (1 != $event->object->imageType) {
-            return;  // early return if it isn't a GIF
-        }
-        if (!$this->isAnimatedGif($event->object->filename)) {
-            return;  // early return if it isn't an animated GIF
-        }
-        // oh dear, I feel a bit 'retro' now: it's an animated GIF
+        if (1 != $event->object->imageType) return;
+        if (!$this->isAnimatedGif($event->object->filename)) return;
+  // crop before resize is currently NOT supported !!
+  if (is_array($event->object->cropExtra)) {
+      $event->replace = true;
+      $event->return = false;
+      return false;
+  }
         require_once( __DIR__ . '/libs/gif_decoder.class.php');
         require_once( __DIR__ . '/libs/gif_encoder.class.php');
-        $wS = $event->object->image['width'];
-        $hS = $event->object->image['height'];
-        $wT = $event->arguments[0];
-        $hT = $event->arguments[1];
-        if (0 == $wT && 0 == $hT) return;
-        if (0 == $wT) $wT = ceil(($hT / $hS) * $wS);
-        if (0 == $hT) $hT = ceil(($wT / $wS) * $hS);
-        $tmpFile = $event->object->filename . '.tmp';
-        $resizemethod = (false == $event->object->cropping) ? 2 : 4;
+        $fullWidth = $event->object->image['width'];
+        $fullHeight = $event->object->image['height'];
+        $finalWidth = $event->arguments[0];
+        $finalHeight = $event->arguments[1];
+        if (0 == $finalWidth && 0 == $finalHeight) return;
+        if (0 == $finalWidth) $finalWidth = ceil(($finalHeight / $fullHeight) * $fullWidth);
+        if (0 == $finalHeight) $finalHeight = ceil(($finalWidth / $fullWidth) * $fullHeight);
+        $this->image = $event->object->image;
+        $this->upscaling = $event->object->upscaling;
+        $this->cropping = $event->object->cropping;
         $this->cropExtra = $event->object->cropExtra;
-        $resizemethod = is_array($this->cropExtra) ? 6 : $resizemethod;
-        if (@copy($event->object->filename, $tmpFile) && $this->scaleAnimatedGif($event->object->filename, $wS, $hS, $wT, $hT, $tmpFile, $resizemethod)) {
-            // we have the resized animated Gif in $tmpFile now
+        $tmpFile = $event->object->filename . '.tmp';
+        if (@copy($event->object->filename, $tmpFile) && $this->scaleAnimatedGif($event->object->filename, $tmpFile, $fullWidth, $fullHeight, $finalWidth, $finalHeight)) {
             if (@copy($tmpFile, $event->object->filename)) {
                 @unlink($tmpFile);
                 $event->replace = true;
@@ -79,128 +88,109 @@ class ImageAnimatedGif extends WireData implements Module {
     }
 
 
-    private function isAnimatedGif($filename) {
-        return (bool) preg_match('/\x00\x21\xF9\x04.{4}\x00(\x2C|\x21)/s', file_get_contents($filename));
-    }
+    protected function scaleAnimatedGif($srcFilename, $dstFilename, $fullWidth, $fullHeight, $finalWidth, $finalHeight) {
+        $bgX = $bgY = 0;
+        $bgWidth = $fullWidth;
+        $bgHeight = $fullHeight;
+        $resizemethod = $this->getResizemethod($bgWidth, $bgHeight, $finalWidth, $finalHeight, $bgX, $bgY);
+        if (0 == $resizemethod) {
+            return true;
+        }
 
-
-    private function prepareGDimage(&$gdimage) {
-        return;
-        $transparentNew = imagecolorallocate($gdimage, $this->meta['tr'], $this->meta['tg'], $this->meta['tb']);
-        $transparentNewIndex = imagecolortransparent($gdimage, $transparentNew);
-        imagefill($gdimage, 0, 0, $transparentNewIndex);
-    }
-
-
-    /**
-    * $resizemethod:
-    *
-    * 2 = contain with aspect ratio
-    *
-    * 4 = resize and crop from center with aspect ratio
-    */
-    private function scaleAnimatedGif($fileSrc, $fullWidth, $fullHeight, $finalWidth, $finalHeight, $saveTo, $resizemethod = 4) {
-
-        $gif = new GIFdecoder(file_get_contents($fileSrc));
+        $gif = new GIFdecoder(file_get_contents($srcFilename));
+        $originalFramesMeta = $gif->GIFGetFramesMeta();
+        if (count($originalFramesMeta) <= 0) return false;
         $this->meta = array(
             'delays'    => $gif->GIFGetDelays(),
             'loops'     => $gif->GIFGetLoop(),
             'disposal'  => $gif->GIFGetDisposal(),
             'tr'        => $gif->GIFGetTransparentR(),
             'tg'        => $gif->GIFGetTransparentG(),
-            'tb'        => $gif->GIFGetTransparentB()
+            'tb'        => $gif->GIFGetTransparentB(),
+            'trans'     => (0 == $gif->GIFGetTransparentI() ? false : true)
         );
         $originalFrames     = $gif->GIFGetFrames();
-        $originalFramesMeta = $gif->GIFGetFramesMeta();
-
-        if (count($originalFrames) <= 0) return false;
-
-        for($i = 0; $i < count($originalFrames); $i++) {
-            $originalFrames[$i] = imagecreatefromstring($originalFrames[$i]);
-        }
-
         $newFrames = array();
-        $intermediateimg = null;
 
-        foreach($originalFrames as $k => $frame) {
-
-            #$newimg = null;
-                        //case 3:
-                        //    $newimg = imagecreatetruecolor($w, $h);
-                        //    imagecopyresampled($newimg, $oldimg, 0, 0, 0, 0, $w, $h, $width, $height);
-                        //    break;
-//            // cropExtra
-//            if (6 == $resizemethod) {
-//                // get crop values and create a new intermediate image
-//                list($x1, $y1, $w1, $h1) = $this->cropExtra;
-//                $tempimg = imagecreatetruecolor($w1, $h1);
-//                $this->prepareGDimage($tempimg);  // prepare transparency
-//                imagecopy($tempimg, $frame, 0, 0, $x1, $y1, $w1, $h1);
-//                unset($x1, $y1, $w1, $h1);
-//                $fullWidth = imagesx($tempimg);
-//                $fullHeight = imagesy($tempimg);
-//                $frame = imagecreatetruecolor($fullWidth, $fullHeight);
-//                $this->prepareGDimage($frame);  // prepare transparency
-//                imagecopy($frame, $tempimg, 0, 0, 0, 0, $fullWidth, $fullHeight);
-//                imagedestroy($tempimg);
-//            }
-
-            // contain || resize
-            if (2 == $resizemethod || 4 == $resizemethod) {
-                $ratio = 1.0;
-                $ratio_w = $fullWidth / $finalWidth;
-                $ratio_h = $fullHeight / $finalHeight;
-                $ratio = ($ratio_h < $ratio_w ? $ratio_h : $ratio_w);  // resize and / or crop
-                if (2 == $resizemethod) $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);  // contain
-
-                $finalWidth2 = intval($fullWidth / $ratio);
-                $finalHeight2 = intval($fullHeight / $ratio);
-
-                $newimg = imagecreatetruecolor($finalWidth2, $finalHeight2);
-                $this->prepareGDimage($newimg);  // prepare transparency
-                if (is_resource($intermediateimg)) {
-                    imagecopy($newimg, $intermediateimg, 0, 0, 0, 0, $finalWidth2, $finalHeight2);
+        if (2 == $resizemethod) { // 2 = resize with aspect ratio
+            $bg = null;
+            $ratio = 1.0;
+            $ratio_w = $fullWidth / $finalWidth;
+            $ratio_h = $fullHeight / $finalHeight;
+            $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
+            foreach($originalFrames as $k => $v) {
+                $frame = @imagecreatefromstring($v);
+                if (!is_resource($frame)) continue;
+                $newimg = imagecreatetruecolor($finalWidth, $finalHeight);
+                $this->prepareGDimage($newimg);
+                if (is_resource($bg)) {
+                    imagecopy($newimg, $bg, 0, 0, 0, 0, $finalWidth, $finalHeight);
                 }
-
-                $srcX = 0; // all frames (but not the first frame) can be a small partial area only
+                $srcX = 0;
                 $srcY = 0;
                 $srcW = imageSX($frame);
                 $srcH = imageSY($frame);
-
-                $dstX = intval($originalFramesMeta[$k]['left'] / $ratio);
-                $dstY = intval($originalFramesMeta[$k]['top'] / $ratio);
-                $dstW = intval($originalFramesMeta[$k]['width'] / $ratio);
-                $dstH = intval($originalFramesMeta[$k]['height'] / $ratio);
-
-                if (4 == $resizemethod && 1 == $ratio) {
-                    imagecopy($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $srcW, $srcH);
-                }
-                else {
-                    imagecopyresampled($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $dstW, $dstH, $srcW, $srcH);
-                }
-            }
-
-            if (is_resource($newimg)) {
+                $dstX = floor($originalFramesMeta[$k]['left'] / $ratio);
+                $dstY = floor($originalFramesMeta[$k]['top'] / $ratio);
+                $dstW = ceil($originalFramesMeta[$k]['width'] / $ratio);
+                $dstH = ceil($originalFramesMeta[$k]['height'] / $ratio);
+                imagecopyresampled($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $dstW, $dstH, $srcW, $srcH);
                 array_push($newFrames, $newimg);
-                if (!is_resource($intermediateimg)) {
-                    $intermediateimg = imagecreatetruecolor($finalWidth, $finalHeight);
-                    $this->prepareGDimage($intermediateimg);  // prepare transparency
+                if (!is_resource($bg)) {
+                    $bg = imagecreatetruecolor($finalWidth, $finalHeight);
+                    $this->prepareGDimage($bg);
                 }
-                imagecopy($intermediateimg, $newimg, 0, 0, 0, 0, $finalWidth, $finalHeight);
+                imagecopy($bg, $newimg, 0, 0, 0, 0, $finalWidth, $finalHeight);
+                $originalFrames[$k] = null;
             }
+        }
 
+        if (4 == $resizemethod) { // 4 = resize and crop from center with aspect ratio
+            $bg = null;
+            $ratio = 1.0;
+            $ratio_w = $fullWidth / $bgWidth;
+            $ratio_h = $fullHeight / $bgHeight;
+            $ratio = ($ratio_h > $ratio_w ? $ratio_h : $ratio_w);
+            foreach($originalFrames as $k => $v) {
+                $frame = @imagecreatefromstring($v);
+                if (!is_resource($frame)) continue;
+                $newimg = imagecreatetruecolor($bgWidth, $bgHeight);
+                $this->prepareGDimage($newimg);
+                if (is_resource($bg)) {
+                    imagecopy($newimg, $bg, 0, 0, 0, 0, $bgWidth, $bgHeight);
+                }
+                $srcX = 0;
+                $srcY = 0;
+                $srcW = imageSX($frame);
+                $srcH = imageSY($frame);
+                $dstX = floor($originalFramesMeta[$k]['left'] / $ratio);
+                $dstY = floor($originalFramesMeta[$k]['top'] / $ratio);
+                $dstW = ceil($originalFramesMeta[$k]['width'] / $ratio);
+                $dstH = ceil($originalFramesMeta[$k]['height'] / $ratio);
+                imagecopyresampled($newimg, $frame, $dstX, $dstY, $srcX, $srcY, $dstW, $dstH, $srcW, $srcH);
+                if (!is_resource($bg)) {
+                    $bg = imagecreatetruecolor($bgWidth, $bgHeight);
+                    $this->prepareGDimage($bg);
+                }
+                imagecopy($bg, $newimg, 0, 0, 0, 0, $bgWidth, $bgHeight);
+                $newimg = imagecreatetruecolor($finalWidth, $finalHeight);
+                $this->prepareGDimage($newimg);
+                imagecopy($newimg, $bg, 0, 0, $bgX, $bgY, $finalWidth, $finalHeight);
+                array_push($newFrames, $newimg);
+                $originalFrames[$k] = null;
+            }
         }
 
         if (count($newFrames) > 0) {
             $frames = array();
-            foreach($newFrames as $i) {
+            foreach($newFrames as $nf) {
+                if (!is_resource($nf)) continue;
                 ob_start();
-                imagegif($i);
+                imagegif($nf);
                 $gifdata = ob_get_clean();
                 array_push($frames, $gifdata);
-                @imagedestroy($i);
+                @imagedestroy($nf);
             }
-
             $gifmerge = new GIFEncoder(
                 $frames,
                 $this->meta['delays'],
@@ -209,18 +199,164 @@ class ImageAnimatedGif extends WireData implements Module {
                 $this->meta['tr'], $this->meta['tg'], $this->meta['tb'],
                 'bin'
             );
-
-            $result = false === fwrite(fopen($saveTo, 'wb'), $gifmerge->GetAnimation()) ? false : true;
+            $result = false === fwrite(fopen($dstFilename, 'wb'), $gifmerge->GetAnimation()) ? false : true;
         }
         else {
             $result = false;
         }
 
-        @imagedestroy($frame);
-        @imagedestroy($newimg);
-        @imagedestroy($intermediateimg);
+        if (isset($bg) && is_resource($bg)) @imagedestroy($bg);
+        if (isset($frame) && is_resource($frame)) @imagedestroy($frame);
+        if (isset($newimg) && is_resource($newimg)) @imagedestroy($newimg);
+        if (isset($tempimg) && is_resource($tempimg)) @imagedestroy($tempimg);
 
         return $result;
+    }
+
+
+    ######## helpers ###################
+
+    private function isAnimatedGif($filename) {
+        return (bool) preg_match('/\x00\x21\xF9\x04.{4}\x00(\x2C|\x21)/s', file_get_contents($filename));
+    }
+
+    private function getResizeDimensions($targetWidth, $targetHeight) {
+        $pWidth = $targetWidth;
+        $pHeight = $targetHeight;
+        $img =& $this->image;
+        if(!$targetHeight) $targetHeight = round(($targetWidth / $img['width']) * $img['height']);
+        if(!$targetWidth) $targetWidth = round(($targetHeight / $img['height']) * $img['width']);
+        $originalTargetWidth = $targetWidth;
+        $originalTargetHeight = $targetHeight;
+        if($img['width'] < $img['height']) {
+            $pHeight = $this->getProportionalHeight($targetWidth);
+        } else {
+            $pWidth = $this->getProportionalWidth($targetHeight);
+        }
+        if($pWidth < $targetWidth) {
+            $pWidth = $targetWidth;
+            $pHeight = $this->getProportionalHeight($targetWidth);
+        }
+        if($pHeight < $targetHeight) {
+            $pHeight = $targetHeight;
+            $pWidth = $this->getProportionalWidth($targetHeight);
+        }
+        if(!$this->upscaling) {
+            while($pWidth > $img['width'] || $pHeight > $img['height']) {
+                if($pWidth > $img['width']) {
+                    $pWidth = $img['width'];
+                    $pHeight = $this->getProportionalHeight($pWidth);
+                }
+                if($pHeight > $img['height']) {
+                    $pHeight = $img['height'];
+                    $pWidth = $this->getProportionalWidth($pHeight);
+                }
+                if($targetWidth > $pWidth) $targetWidth = $pWidth;
+                if($targetHeight > $pHeight) $targetHeight = $pHeight;
+                if(!$this->cropping) {
+                    $targetWidth = $pWidth;
+                    $targetHeight = $pHeight;
+                }
+            }
+        }
+        if(!$this->cropping) {
+            if($pHeight > $originalTargetHeight) {
+                $pHeight = $originalTargetHeight;
+                $pWidth = $this->getProportionalWidth($pHeight);
+                $targetWidth = $pWidth;
+                $targetHeight = $pHeight;
+            }
+            if($pWidth > $originalTargetWidth) {
+                $pWidth = $originalTargetWidth;
+                $pHeight = $this->getProportionalHeight($pWidth);
+                $targetWidth = $pWidth;
+                $targetHeight = $pHeight;
+            }
+        }
+        $r = array(
+                0 => (int) $pWidth,
+                1 => (int) $pHeight,
+                2 => (int) $targetWidth,
+                3 => (int) $targetHeight
+                );
+        return $r;
+    }
+
+    private function getProportionalWidth($targetHeight) {
+        $img =& $this->image;
+        return ceil(($targetHeight / $img['height']) * $img['width']);
+    }
+
+    private function getProportionalHeight($targetWidth) {
+        $img =& $this->image;
+        return ceil(($targetWidth / $img['width']) * $img['height']);
+    }
+
+    private function getResizemethod(&$gdWidth, &$gdHeight, &$targetWidth, &$targetHeight, &$x1, &$y1) {
+        list($gdWidth, $gdHeight, $targetWidth, $targetHeight) = $this->getResizeDimensions($targetWidth, $targetHeight);
+        $x1 = ($gdWidth / 2) - ($targetWidth / 2);
+        $y1 = ($gdHeight / 2) - ($targetHeight / 2);
+        $this->getCropDimensions($x1, $y1, $gdWidth, $targetWidth, $gdHeight, $targetHeight);
+        if ($gdWidth == $targetWidth && $gdWidth == $this->image['width'] &&  $gdHeight == $this->image['height'] && $gdHeight == $targetHeight) return 0;
+        if ($gdWidth == $targetWidth && $gdHeight == $targetHeight) return 2;
+        return 4;
+    }
+
+    private function getCropDimensions(&$w1, &$h1, $gdWidth, $targetWidth, $gdHeight, $targetHeight) {
+        if(is_string($this->cropping)) {
+            switch($this->cropping) {
+                case 'nw':
+                    $w1 = 0;
+                    $h1 = 0;
+                    break;
+                case 'n':
+                    $h1 = 0;
+                    break;
+                case 'ne':
+                    $w1 = $gdWidth - $targetWidth;
+                    $h1 = 0;
+                    break;
+                case 'w':
+                    $w1 = 0;
+                    break;
+                case 'e':
+                    $w1 = $gdWidth - $targetWidth;
+                    break;
+                case 'sw':
+                    $w1 = 0;
+                    $h1 = $gdHeight - $targetHeight;
+                    break;
+                case 's':
+                    $h1 = $gdHeight - $targetHeight;
+                    break;
+                case 'se':
+                    $w1 = $gdWidth - $targetWidth;
+                    $h1 = $gdHeight - $targetHeight;
+                    break;
+                default:
+            }
+        } else if(is_array($this->cropping)) {
+            if(strpos($this->cropping[0], '%') === false) $pointX = (int) $this->cropping[0];
+                else $pointX = $gdWidth * ((int) $this->cropping[0] / 100);
+
+            if(strpos($this->cropping[1], '%') === false) $pointY = (int) $this->cropping[1];
+                else $pointY = $gdHeight * ((int) $this->cropping[1] / 100);
+
+            if($pointX < $targetWidth / 2) $w1 = 0;
+                else if($pointX > ($gdWidth - $targetWidth / 2)) $w1 = $gdWidth - $targetWidth;
+                else $w1 = $pointX - $targetWidth / 2;
+
+            if($pointY < $targetHeight / 2) $h1 = 0;
+                else if($pointY > ($gdHeight - $targetHeight / 2)) $h1 = $gdHeight - $targetHeight;
+                else $h1 = $pointY - $targetHeight / 2;
+        }
+    }
+
+    private function prepareGDimage(&$gdimage) {
+        if (!$this->meta['trans']) return;
+        $transparentNew = imagecolorallocate($gdimage, $this->meta['tr'], $this->meta['tg'], $this->meta['tb']);
+        $transparentNewIndex = imagecolortransparent($gdimage, $transparentNew);
+        imagefill($gdimage, 0, 0, $transparentNewIndex);
     }
 
 }

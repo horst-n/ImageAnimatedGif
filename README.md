@@ -3,11 +3,11 @@ Image Animated Gif
 
 ### Module for ProcessWire 2.5 stable or newer
 
-#### Version 1.0.1 dev, (15 April 2015)
+#### Version 1.0.2 dev, (15 April 2015)
 
 ##### helps with resizing and cropping of animated GIFs when using GD-Library
 
-##### THIS VERSION IS UNDER DEVELOPMENT, it currently does NOT support crop and cropExtra, but it supports width / height / size and Pias contain and cover
+##### THIS VERSION IS UNDER DEVELOPMENT, it currently does NOT support cropExtra, but it supports centered crop & width / height / size & Pias contain / cover
 
 ---
 
