@@ -15,7 +15,7 @@
 ::
 ::    Updated at 2007. 02. 13. '00.05.AM'
 ::
-::    Enhanced version by xurei (https://github.com/xurei/GIFDecoder_optimized)
+::  * Enhanced version by xurei (https://github.com/xurei/GIFDecoder_optimized)
 ::
 ::  Try on-line GIFBuilder Form demo based on GIFEncoder.
 ::

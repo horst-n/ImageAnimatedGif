@@ -10,8 +10,7 @@
 ::
 ::  * Optimized version by xurei
 ::    https://github.com/xurei/GIFDecoder_optimized
-::
-::  * Updated at 2015-04-13
+::    Updated at 2015-04-13
 ::
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 */

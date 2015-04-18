@@ -3,7 +3,7 @@ Image Animated Gif
 
 ### Module for ProcessWire 2.5 stable or newer
 
-#### Version 1.9.0 - (18 April 2015)
+#### Version 2.0.0 - (18 April 2015)
 
 ##### helps with resizing and cropping of animated GIFs when using GD-Library
 
