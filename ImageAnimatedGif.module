@@ -11,7 +11,7 @@
 *  This module supports resizing and cropping of animated GIFs when using GD-Library
 *  (The GD-Library does not support this)
 *
-*  Version 2.0.0
+*  Version 2.0.1
 *
 *
 *  This module is completely based upon the fantastic work of
@@ -282,7 +282,7 @@ class ImageAnimatedGif extends WireData implements Module {
     ######## helpers ###################
 
     private function isAnimatedGif($filename) {
-        return (bool) preg_match('/\x00\x21\xF9\x04.{4}\x00(\x2C|\x21)/s', file_get_contents($filename));
+        return 1 < preg_match_all('/\x00\x21\xF9\x04.{4}\x00(\x2C|\x21)/s', file_get_contents($filename));
     }
 
     private function getResizeDimensions($targetWidth, $targetHeight) {
